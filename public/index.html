@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Timing</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>TIMING</h1>
+    <canvas id="game" tabindex="0" aria-label="Timing game. Press space or click when the marker is inside the zone."></canvas>
+
+    <section id="over" hidden>
+      <p id="over-score"></p>
+      <form id="score-form" autocomplete="off">
+        <label for="name">Your initials</label>
+        <input id="name" name="name" maxlength="3" autocapitalize="characters" spellcheck="false" placeholder="ABC" required>
+        <button type="submit">Submit</button>
+      </form>
+      <p id="score-msg" role="status"></p>
+      <button id="again" type="button">Play again</button>
+    </section>
+
+    <section>
+      <h2>Top 10</h2>
+      <ol id="board"></ol>
+    </section>
+  </main>
+  <script src="game.js"></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+services:
+  timing:
+    build: .
+    container_name: timing
+    restart: unless-stopped
+    ports:
+      # Level 2: tailnet IP only, never 0.0.0.0. Host port 3001 because
+      # Homepage already holds 100.74.23.114:3000.
+      # Level 3: drop this line and add `timing.lab.hootappi.com { reverse_proxy timing:3000 }` to the Caddyfile.
+      - "100.74.23.114:3001:3000"
+    volumes:
+      - /home/hootappi/data/timing:/app/data
+    networks:
+      - edge
+
+networks:
+  edge:
+    external: true

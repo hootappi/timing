@@ -1,0 +1,13 @@
+{
+  "name": "timing",
+  "version": "1.0.0",
+  "description": "One-button timing game with a global top-ten leaderboard.",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,106 @@
+:root {
+  color-scheme: dark;
+  --bg: #0d1117;
+  --panel: #161b22;
+  --line: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #ffd23f;
+  --good: #3ddc84;
+  --bad: #ff5a5f;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+main {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+h1 {
+  margin: 8px 0 12px;
+  letter-spacing: 0.3em;
+  font-size: 1.4rem;
+  color: var(--accent);
+}
+
+h2 {
+  margin: 24px 0 8px;
+  font-size: 1rem;
+  letter-spacing: 0.15em;
+  color: var(--muted);
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 800 / 360;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  touch-action: manipulation;
+  cursor: pointer;
+  outline: none;
+}
+
+#over {
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+#over p { margin: 0 0 12px; }
+#over-score { font-size: 1.2rem; font-weight: 700; }
+#score-msg { color: var(--muted); min-height: 1.2em; }
+
+#score-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+#score-form label { color: var(--muted); }
+
+input, button {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 14px;
+}
+
+input {
+  width: 6ch;
+  box-sizing: content-box;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  font-weight: 700;
+}
+
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button[type="submit"] { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 700; }
+
+ol { list-style: none; margin: 0; padding: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+
+li {
+  display: grid;
+  grid-template-columns: 3ch 1fr auto;
+  gap: 16px;
+  padding: 10px 16px;
+  font-variant-numeric: tabular-nums;
+}
+li + li { border-top: 1px solid var(--line); }
+li .rank { color: var(--muted); }
+li .name { font-weight: 700; letter-spacing: 0.2em; }
+li .pts { font-weight: 700; }
+li.mine { background: rgba(255, 210, 63, 0.15); }
+li.empty { display: block; color: var(--muted); }
+
+[hidden] { display: none !important; }
