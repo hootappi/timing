@@ -100,7 +100,7 @@ async function postScore(req, res) {
   }
   const name = typeof body?.name === 'string' ? body.name.toUpperCase() : '';
   const score = body?.score;
-  if (!/^[A-Z]{3}$/.test(name)) return sendJson(res, 400, { error: 'name must be three letters' });
+  if (!/^[A-Z0-9]{1,8}$/.test(name)) return sendJson(res, 400, { error: 'name must be 1 to 8 letters or digits' });
   if (!Number.isInteger(score) || score < 1 || score > 9999) {
     return sendJson(res, 400, { error: 'score must be an integer from 1 to 9999' });
   }

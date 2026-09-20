@@ -6,9 +6,16 @@ Plain HTML, CSS and vanilla JS on a canvas. A small dependency-free Node server.
 
 ## Rules
 
-- The marker must be inside the zone when you click. Clicking outside it, or letting the marker reach the right edge, ends the game.
+- The marker must be inside the zone when you click or tap. Clicking outside it, or letting the marker reach the right edge, ends the game.
 - Each hit: zone width x0.88 (floor at 3.5% of the bar), marker speed x1.12.
-- Only scores of 1 or more can be submitted.
+- Only scores of 1 or more can be submitted. Names are 1 to 8 letters or digits.
+
+## Screen and devices
+
+The game fills the whole viewport on phones, tablets and desktop. Safe-area insets (notches, home indicator) are respected, page scroll and pull-to-refresh are disabled, and the name field does not auto-focus on touch devices so the keyboard stays down until you tap it.
+
+- **Android / desktop:** a Fullscreen button appears (browser Fullscreen API).
+- **iPhone:** Safari has no Fullscreen API for pages. Use Share > Add to Home Screen; it then launches without browser chrome.
 
 ## Run locally
 
@@ -52,7 +59,7 @@ Submit a score. Body:
 { "name": "ABC", "score": 17 }
 ```
 
-- `name`: exactly three letters A-Z (lowercase is uppercased).
+- `name`: 1 to 8 characters, letters or digits (lowercase is uppercased).
 - `score`: integer, 1 to 9999.
 
 Returns `201 { "ok": true, "rank": 4 }` (`rank` is `null` if outside the stored top 100), or `400`/`413` with `{ "error": "..." }`.

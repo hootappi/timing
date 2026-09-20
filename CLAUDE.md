@@ -2,7 +2,7 @@
 
 Inherits from ~/.claude/CLAUDE.md.
 
-One-button timing game. Vanilla HTML/CSS/JS canvas frontend in `public/`, dependency-free Node server in `server.js`, scores in a JSON file at `$DATA_DIR/scores.json`.
+One-button timing game. The canvas fills the viewport (mobile first, works on desktop); layout is computed from window size in `layout()`, game state is kept in bar fractions. Vanilla HTML/CSS/JS canvas frontend in `public/`, dependency-free Node server in `server.js`, scores in a JSON file at `$DATA_DIR/scores.json`.
 
 ## Constraints
 

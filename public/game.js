@@ -2,8 +2,6 @@
   'use strict';
 
   // --- config ------------------------------------------------------------
-  const W = 800, H = 360;
-  const BAR = { x: 40, y: 165, w: 720, h: 64 };
   const START_ZONE = 0.28;    // zone width, fraction of bar
   const ZONE_SHRINK = 0.88;   // per hit
   const MIN_ZONE = 0.035;
@@ -11,7 +9,8 @@
   const SPEED_UP = 1.12;      // per hit
   const READY_TIME = 0.6;     // marker parked at the left before each sweep
   const HIT_TIME = 0.6;       // celebration before the next round
-  const RETRY_LOCKOUT = 0.5;  // seconds after game over before space/click restarts
+  const RETRY_LOCKOUT = 0.5;  // seconds after game over before space/tap restarts
+  const MAX_BAR_W = 960;      // keeps the bar sane on wide desktop windows
 
   const C = {
     bg: '#0d1117', bar: '#21262d', barEdge: '#3a414a', zone: '#ffd23f', good: '#3ddc84',
@@ -19,14 +18,14 @@
   };
 
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const touch = window.matchMedia('(pointer: coarse)').matches;
+  const autofocusOk = window.matchMedia('(hover: hover) and (pointer: fine)').matches;  // a phone keyboard popping up unasked is worse than a tap
+  const verb = touch ? 'tap' : 'click';
 
   // --- dom ---------------------------------------------------------------
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
-  const dpr = Math.min(window.devicePixelRatio || 1, 3);
-  canvas.width = W * dpr;
-  canvas.height = H * dpr;
-
+  const panel = document.getElementById('panel');
   const overPanel = document.getElementById('over');
   const overScore = document.getElementById('over-score');
   const scoreForm = document.getElementById('score-form');
@@ -34,6 +33,37 @@
   const scoreMsg = document.getElementById('score-msg');
   const againBtn = document.getElementById('again');
   const boardEl = document.getElementById('board');
+  const boardBtn = document.getElementById('board-btn');
+  const fsBtn = document.getElementById('fs-btn');
+  const safeProbe = document.getElementById('safe');
+
+  // --- layout ------------------------------------------------------------
+  // The canvas fills the viewport. Everything is placed from W/H on each resize;
+  // game state is stored in bar fractions so it survives rotation.
+  let W = 0, H = 0, dpr = 1, u = 1;   // u: size unit, scales text and effects
+  let inset = { t: 0, r: 0, b: 0, l: 0 };
+  const BAR = { x: 0, y: 0, w: 0, h: 0 };
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+  function layout() {
+    W = canvas.clientWidth;
+    H = canvas.clientHeight;
+    dpr = Math.min(window.devicePixelRatio || 1, 3);
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+
+    const cs = getComputedStyle(safeProbe);
+    inset = { t: parseFloat(cs.paddingTop) || 0, r: parseFloat(cs.paddingRight) || 0, b: parseFloat(cs.paddingBottom) || 0, l: parseFloat(cs.paddingLeft) || 0 };
+
+    u = clamp(Math.min(W, H) / 450, 0.8, 1.4);
+    const margin = clamp(W * 0.05, 16, 48);
+    const left = Math.max(margin, inset.l + 8);
+    const right = W - Math.max(margin, inset.r + 8);
+    BAR.w = Math.min(right - left, MAX_BAR_W);
+    BAR.x = left + (right - left - BAR.w) / 2;
+    BAR.h = clamp(Math.min(W, H) * 0.16, 44, 84);
+    BAR.y = H * 0.36 - BAR.h / 2;   // high enough to stay visible above the bottom sheet
+  }
 
   // --- state -------------------------------------------------------------
   let state = 'idle';        // idle | ready | sweep | hit | over
@@ -56,7 +86,17 @@
   const rand = (a, b) => a + Math.random() * (b - a);
 
   // --- game flow ---------------------------------------------------------
-  function setState(s) { state = s; stateT = 0; }
+  let boardOpen = false;
+
+  function setState(s) { state = s; stateT = 0; syncPanel(); }
+
+  // The sheet shows on game over, or on demand from the idle screen. Never during play.
+  function syncPanel() {
+    if (state !== 'idle') boardOpen = false;
+    overPanel.hidden = state !== 'over';
+    panel.hidden = state !== 'over' && !boardOpen;
+    boardBtn.hidden = state !== 'idle';
+  }
 
   function prepareRound() {
     zoneW = Math.max(MIN_ZONE, START_ZONE * Math.pow(ZONE_SHRINK, hits));
@@ -69,7 +109,6 @@
 
   function startGame() {
     hits = 0;
-    overPanel.hidden = true;
     particles = []; rings = []; floaters = [];
     prepareRound();
   }
@@ -83,11 +122,11 @@
   function hit() {
     hits++;
     const x = markerX(), y = BAR.y + BAR.h / 2;
-    burst(x, y, C.good, 26, 320);
+    burst(x, y, C.good, 26, 320 * u);
     rings.push({ x, y, t: 0 });
-    floaters.push({ text: '+1', x, y: BAR.y - 20, t: 0 });
+    floaters.push({ text: '+1', x, y: BAR.y - 20 * u, t: 0 });
     flash = { color: C.good, t: 0.18, dur: 0.18 };
-    if (!reducedMotion) shake = 4;
+    if (!reducedMotion) shake = 4 * u;
     tone(440 * Math.pow(1.0595, Math.min(hits, 24)), 0.14, 'triangle', 0.1);
     setState('hit');
   }
@@ -95,9 +134,9 @@
   function miss(reason) {
     overReason = reason;
     const x = markerX(), y = BAR.y + BAR.h / 2;
-    burst(x, y, C.bad, 22, 260);
+    burst(x, y, C.bad, 22, 260 * u);
     flash = { color: C.bad, t: 0.35, dur: 0.35 };
-    if (!reducedMotion) shake = 16;
+    if (!reducedMotion) shake = 16 * u;
     tone(150, 0.35, 'sawtooth', 0.09, 60);
     if (hits > best) { best = hits; store('timing.best', String(best)); }
     setState('over');
@@ -115,7 +154,7 @@
   function burst(x, y, color, n, power) {
     for (let i = 0; i < n; i++) {
       const a = rand(0, Math.PI * 2), s = rand(0.3, 1) * power;
-      particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 60, life: rand(0.4, 0.8), max: 0.8, color, size: rand(2, 5) });
+      particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 60, life: rand(0.4, 0.8), max: 0.8, color, size: rand(2, 5) * u });
     }
   }
 
@@ -187,39 +226,41 @@
   }
 
   function drawHud() {
-    text(`SCORE ${hits}`, 40, 42, 34, C.text, 'left');
-    text(`BEST ${best}`, W - 40, 42, 22, C.muted, 'right', 700);
+    const y = inset.t + 34 * u;
+    text(`SCORE ${hits}`, BAR.x, y, 38 * u, C.text, 'left');
+    text(`BEST ${best}`, BAR.x, y + 32 * u, 18 * u, C.muted, 'left', 700);
   }
 
   function drawBar() {
     const missed = state === 'over';
+    const r = 12 * u;
     ctx.fillStyle = C.bar;
-    ctx.beginPath(); ctx.roundRect(BAR.x, BAR.y, BAR.w, BAR.h, 12); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(BAR.x, BAR.y, BAR.w, BAR.h, r); ctx.fill();
 
     const zx = BAR.x + zoneX * BAR.w, zw = zoneW * BAR.w;
     const color = state === 'hit' ? C.good : C.zone;
     ctx.save();
     ctx.shadowColor = color;
-    ctx.shadowBlur = state === 'hit' ? 40 : 18;
+    ctx.shadowBlur = (state === 'hit' ? 40 : 18) * u;
     ctx.fillStyle = color;
     ctx.fillRect(zx, BAR.y, zw, BAR.h);
     ctx.restore();
 
     if (missed) {   // pulse an outline so the player sees where the zone was
       ctx.strokeStyle = C.zone;
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 3 * u;
       ctx.globalAlpha = 0.5 + 0.5 * Math.sin(stateT * 10);
-      ctx.strokeRect(zx - 4, BAR.y - 4, zw + 8, BAR.h + 8);
+      ctx.strokeRect(zx - 4 * u, BAR.y - 4 * u, zw + 8 * u, BAR.h + 8 * u);
       ctx.globalAlpha = 1;
     }
 
     ctx.strokeStyle = missed ? C.bad : state === 'hit' ? C.good : C.barEdge;
-    ctx.lineWidth = missed || state === 'hit' ? 4 : 2;
-    ctx.beginPath(); ctx.roundRect(BAR.x, BAR.y, BAR.w, BAR.h, 12); ctx.stroke();
+    ctx.lineWidth = (missed || state === 'hit' ? 4 : 2) * u;
+    ctx.beginPath(); ctx.roundRect(BAR.x, BAR.y, BAR.w, BAR.h, r); ctx.stroke();
   }
 
   function drawMarker() {
-    const x = markerX(), top = BAR.y - 18, bottom = BAR.y + BAR.h + 18;
+    const x = markerX(), top = BAR.y - 18 * u, bottom = BAR.y + BAR.h + 18 * u;
     const color = state === 'over' ? C.bad : state === 'hit' ? C.good : C.marker;
 
     if (state === 'sweep') {   // motion trail, longer the faster it goes
@@ -233,9 +274,9 @@
     }
 
     ctx.fillStyle = color;
-    ctx.fillRect(x - 2.5, top, 5, bottom - top);
+    ctx.fillRect(x - 2.5 * u, top, 5 * u, bottom - top);
     ctx.beginPath();
-    ctx.moveTo(x - 11, top - 12); ctx.lineTo(x + 11, top - 12); ctx.lineTo(x, top + 2);
+    ctx.moveTo(x - 11 * u, top - 12 * u); ctx.lineTo(x + 11 * u, top - 12 * u); ctx.lineTo(x, top + 2 * u);
     ctx.closePath(); ctx.fill();
   }
 
@@ -244,8 +285,8 @@
       const k = r.t / 0.45;
       ctx.strokeStyle = C.good;
       ctx.globalAlpha = 1 - k;
-      ctx.lineWidth = 4;
-      ctx.beginPath(); ctx.arc(r.x, r.y, 10 + k * 80, 0, Math.PI * 2); ctx.stroke();
+      ctx.lineWidth = 4 * u;
+      ctx.beginPath(); ctx.arc(r.x, r.y, (10 + k * 80) * u, 0, Math.PI * 2); ctx.stroke();
     }
     for (const p of particles) {
       ctx.globalAlpha = Math.max(0, p.life / p.max);
@@ -255,25 +296,25 @@
     ctx.globalAlpha = 1;
     for (const f of floaters) {
       ctx.globalAlpha = 1 - f.t / 0.7;
-      text(f.text, f.x, f.y - f.t * 60, 30, C.good);
+      text(f.text, f.x, f.y - f.t * 60 * u, 32 * u, C.good);
     }
     ctx.globalAlpha = 1;
   }
 
   function drawMessages() {
+    const cx = W / 2;
+    const below = BAR.y + BAR.h + 26 * u;   // clear of the marker's overhang
     const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 300);
     if (state === 'idle') {
-      text('STOP THE MARKER IN THE ZONE', W / 2, 290, 22, C.text);
+      text('TIMING', cx, below + 60 * u, 60 * u, C.zone, 'center', 900);
+      text('STOP THE MARKER IN THE ZONE', cx, below + 118 * u, 20 * u, C.text);
       ctx.globalAlpha = pulse;
-      text('click or press SPACE to start', W / 2, 322, 18, C.muted, 'center', 600);
+      text(touch ? 'tap to start' : 'click or press SPACE to start', cx, below + 150 * u, 18 * u, C.muted, 'center', 600);
       ctx.globalAlpha = 1;
     } else if (state === 'over') {
-      text(overReason.toUpperCase(), W / 2, 100, 52, C.bad);
-      ctx.globalAlpha = pulse;
-      text('click or press SPACE to retry', W / 2, 322, 18, C.muted, 'center', 600);
-      ctx.globalAlpha = 1;
+      text(overReason.toUpperCase(), cx, BAR.y - 46 * u, 52 * u, C.bad);
     } else if (state === 'ready' || (state === 'sweep' && hits === 0)) {
-      text(state === 'ready' ? 'GET READY' : 'NOW!', W / 2, 290, 24, C.muted, 'center', 700);
+      text(state === 'ready' ? 'GET READY' : 'NOW!', cx, below + 44 * u, 26 * u, C.muted, 'center', 700);
     }
   }
 
@@ -296,7 +337,28 @@
     e.preventDefault();
     act();
   });
-  againBtn.addEventListener('click', startGame);
+  againBtn.addEventListener('click', () => { againBtn.blur(); startGame(); });
+
+  boardBtn.addEventListener('click', () => {
+    boardBtn.blur();   // so space still means "play", not "press the focused button"
+    boardOpen = !boardOpen;
+    if (boardOpen) loadBoard();
+    syncPanel();
+  });
+
+  if (document.fullscreenEnabled) {   // absent on iPhone Safari; there, Add to Home Screen gives full screen
+    fsBtn.hidden = false;
+    fsBtn.addEventListener('click', () => {
+      fsBtn.blur();
+      const req = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+      req.catch(() => { /* refused: stay windowed */ });
+    });
+    document.addEventListener('fullscreenchange', () => {
+      fsBtn.textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
+    });
+  }
+
+  window.addEventListener('resize', layout);
 
   // --- leaderboard -------------------------------------------------------
   async function loadBoard(highlightRank) {
@@ -330,13 +392,13 @@
   }
 
   function showOver() {
-    overPanel.hidden = false;
     scoreMsg.textContent = '';
+    loadBoard();
     if (hits > 0) {
       overScore.textContent = `Score: ${hits} ${hits === 1 ? 'round' : 'rounds'} survived`;
       scoreForm.hidden = false;
-      nameInput.value = (store('timing.name') || '').slice(0, 3);
-      nameInput.focus();
+      nameInput.value = (store('timing.name') || '').slice(0, 8);
+      if (autofocusOk) nameInput.focus();
     } else {
       overScore.textContent = 'Score: 0';
       scoreForm.hidden = true;
@@ -345,13 +407,13 @@
   }
 
   nameInput.addEventListener('input', () => {
-    nameInput.value = nameInput.value.replace(/[^a-z]/gi, '').toUpperCase();
+    nameInput.value = nameInput.value.replace(/[^a-z0-9]/gi, '').toUpperCase();
   });
 
   scoreForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const name = nameInput.value;
-    if (!/^[A-Z]{3}$/.test(name)) { scoreMsg.textContent = 'Three letters, please.'; return; }
+    if (!/^[A-Z0-9]{1,8}$/.test(name)) { scoreMsg.textContent = 'Use 1 to 8 letters or digits.'; return; }
     const submit = scoreForm.querySelector('button');
     submit.disabled = true;
     try {
@@ -375,8 +437,9 @@
   });
 
   // --- boot --------------------------------------------------------------
+  layout();
   prepareRound();
-  state = 'idle';   // show a demo zone behind the title prompt
+  setState('idle');   // show a demo zone behind the title
   loadBoard();
   requestAnimationFrame(frame);
 })();

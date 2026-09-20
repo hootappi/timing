@@ -2,31 +2,40 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#0d1117">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Timing">
   <title>Timing</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <main>
-    <h1>TIMING</h1>
-    <canvas id="game" tabindex="0" aria-label="Timing game. Press space or click when the marker is inside the zone."></canvas>
+  <h1 class="sr-only">Timing</h1>
+  <canvas id="game" aria-label="Timing game. Tap, click or press space when the marker is inside the zone."></canvas>
 
-    <section id="over" hidden>
+  <div class="hud-buttons">
+    <button id="board-btn" type="button">Top 10</button>
+    <button id="fs-btn" type="button" hidden>Fullscreen</button>
+  </div>
+
+  <div id="panel" hidden>
+    <div id="over" hidden>
       <p id="over-score"></p>
       <form id="score-form" autocomplete="off">
-        <label for="name">Your initials</label>
-        <input id="name" name="name" maxlength="3" autocapitalize="characters" spellcheck="false" placeholder="ABC" required>
+        <label for="name" class="sr-only">Your name</label>
+        <input id="name" name="name" maxlength="8" autocapitalize="characters" autocorrect="off" spellcheck="false" placeholder="NAME" required>
         <button type="submit">Submit</button>
       </form>
       <p id="score-msg" role="status"></p>
       <button id="again" type="button">Play again</button>
-    </section>
+    </div>
+    <h2>Top 10</h2>
+    <ol id="board"></ol>
+  </div>
 
-    <section>
-      <h2>Top 10</h2>
-      <ol id="board"></ol>
-    </section>
-  </main>
+  <div id="safe" aria-hidden="true"></div>
   <script src="game.js"></script>
 </body>
 </html>
