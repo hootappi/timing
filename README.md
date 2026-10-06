@@ -51,20 +51,27 @@ Returns the top ten scores, best first.
 { "scores": [{ "name": "ABC", "score": 17 }] }
 ```
 
+### `POST /api/games`
+
+Starts a ranked run. Returns `201 { "token": "...", "seed": 123456789 }`. The client fetches one ahead of time so a run never waits on the network; if it has none (server unreachable), the run is played unranked and cannot be submitted.
+
 ### `POST /api/scores`
 
-Submit a score. Body:
+Submit a finished run. Body:
 
 ```json
-{ "name": "ABC", "score": 17 }
+{ "game": "<token>", "name": "ABC", "rounds": [0.912, 0.774, 0.803] }
 ```
 
+- `game`: token from `POST /api/games`. Each token can be submitted once and expires after 6 hours.
 - `name`: 1 to 8 characters, letters or digits (lowercase is uppercased).
-- `score`: integer, 1 to 9999.
+- `rounds`: for each hit, seconds the marker had been sweeping when the player pressed.
+
+The client never sends a score. The server regenerates every zone from the seed (`public/rules.js`, shared with the browser), checks that each press landed inside its zone, and checks that at least as much real time has passed since the token was issued as the run needs. The score is the number of verified rounds.
 
 Returns `201 { "ok": true, "rank": 4 }` (`rank` is `null` if outside the stored top 100), or `400`/`413` with `{ "error": "..." }`.
 
-Validation is deliberately minimal; there is no auth and no rate limiting. This is a test deployment.
+Limits: this stops edited game logic and hand-crafted requests, but not a script that reads the zone and presses at the right moment. Any score computed in the player's browser can be botted; the replay only makes cheating cost a bot instead of a one-line edit. There is no auth and no rate limiting.
 
 ## Deploy (lab VPS, level 2)
 
@@ -91,7 +98,7 @@ Going public (level 3): add `timing.lab.hootappi.com { reverse_proxy timing:3000
 
 ```
 server.js        HTTP server, leaderboard API, static files
-public/          index.html, style.css, game.js
+public/          index.html, style.css, game.js, rules.js (gameplay rules, also used by the server)
 Dockerfile       multi-stage, alpine, runs as non-root
 compose.yaml     lab stack: edge network, tailnet port, bind mount
 ```

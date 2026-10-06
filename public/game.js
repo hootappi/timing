@@ -2,13 +2,7 @@
   'use strict';
 
   // --- config ------------------------------------------------------------
-  const START_ZONE = 0.28;    // zone width, fraction of bar
-  const ZONE_SHRINK = 0.88;   // per hit
-  const MIN_ZONE = 0.035;
-  const START_SPEED = 0.55;   // bar-lengths per second
-  const SPEED_UP = 1.12;      // per hit
-  const READY_TIME = 0.6;     // marker parked at the left before each sweep
-  const HIT_TIME = 0.6;       // celebration before the next round
+  const R = window.TimingRules;   // gameplay rules, shared with the server (rules.js)
   const RETRY_LOCKOUT = 0.5;  // seconds after game over before space/tap restarts
   const MAX_BAR_W = 960;      // keeps the bar sane on wide desktop windows
 
@@ -70,7 +64,11 @@
   let stateT = 0;
   let hits = 0;
   let best = store('timing.best') | 0;
-  let pos = 0, zoneX = 0.5, zoneW = START_ZONE, speed = START_SPEED;
+  let pos = 0, sweepT = 0, zoneX = 0.5, zoneW = R.START_ZONE, speed = R.START_SPEED;
+  let next = Math.random;    // zone positions; seeded from the server's game for ranked runs
+  let game = null;           // { token, seed } of the run in progress; null means unranked
+  let nextGame = null;       // fetched ahead so a run can start without waiting on the network
+  let rounds = [];           // sweepT of each hit, submitted for the server to replay
   let overReason = '';
   let shake = 0, flash = { color: '', t: 0, dur: 0.3 };
   let particles = [], rings = [], floaters = [];
@@ -99,15 +97,17 @@
   }
 
   function prepareRound() {
-    zoneW = Math.max(MIN_ZONE, START_ZONE * Math.pow(ZONE_SHRINK, hits));
-    const minX = 0.15, maxX = 0.97 - zoneW;   // leave reaction room after the start
-    zoneX = rand(minX, maxX);
-    speed = START_SPEED * Math.pow(SPEED_UP, hits);
+    ({ zoneW, zoneX, speed } = R.round(next, hits));
     pos = 0;
+    sweepT = 0;
     setState('ready');
   }
 
   function startGame() {
+    game = nextGame;
+    nextGame = null;
+    next = game ? R.rng(game.seed) : Math.random;
+    rounds = [];
     hits = 0;
     particles = []; rings = []; floaters = [];
     prepareRound();
@@ -116,7 +116,7 @@
   const markerX = () => BAR.x + pos * BAR.w;
 
   function judge() {
-    if (pos >= zoneX && pos <= zoneX + zoneW) hit(); else miss('missed');
+    if (R.isHit({ zoneX, zoneW, speed }, sweepT)) { rounds.push(sweepT); hit(); } else miss('missed');
   }
 
   function hit() {
@@ -178,11 +178,12 @@
   // --- update ------------------------------------------------------------
   function update(dt) {
     stateT += dt;
-    if (state === 'ready' && stateT >= READY_TIME) setState('sweep');
+    if (state === 'ready' && stateT >= R.READY_TIME) setState('sweep');
     else if (state === 'sweep') {
-      pos += speed * dt;
+      sweepT += dt;
+      pos = speed * sweepT;   // same formula the server replays
       if (pos > 1) { pos = 1; miss('too late'); }
-    } else if (state === 'hit' && stateT >= HIT_TIME) prepareRound();
+    } else if (state === 'hit' && stateT >= R.HIT_TIME) prepareRound();
 
     for (const p of particles) { p.life -= dt; p.vy += 700 * dt; p.x += p.vx * dt; p.y += p.vy * dt; }
     particles = particles.filter((p) => p.life > 0);
@@ -361,6 +362,13 @@
   window.addEventListener('resize', layout);
 
   // --- leaderboard -------------------------------------------------------
+  async function fetchGame() {
+    try {
+      const res = await fetch('/api/games', { method: 'POST' });
+      if (res.ok) nextGame = await res.json();
+    } catch { /* offline: the next run is unranked */ }
+  }
+
   async function loadBoard(highlightRank) {
     boardEl.replaceChildren();
     let list;
@@ -394,7 +402,12 @@
   function showOver() {
     scoreMsg.textContent = '';
     loadBoard();
-    if (hits > 0) {
+    fetchGame();
+    if (hits > 0 && !game) {
+      overScore.textContent = `Score: ${hits}`;
+      scoreForm.hidden = true;
+      scoreMsg.textContent = 'Leaderboard was offline when this run started, so it cannot be saved.';
+    } else if (hits > 0) {
       overScore.textContent = `Score: ${hits} ${hits === 1 ? 'round' : 'rounds'} survived`;
       scoreForm.hidden = false;
       nameInput.value = (store('timing.name') || '').slice(0, 8);
@@ -420,7 +433,7 @@
       const res = await fetch('/api/scores', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, score: hits }),
+        body: JSON.stringify({ game: game.token, name, rounds }),
       });
       if (!res.ok) throw new Error((await res.json()).error || String(res.status));
       const { rank } = await res.json();
@@ -441,5 +454,6 @@
   prepareRound();
   setState('idle');   // show a demo zone behind the title
   loadBoard();
+  fetchGame();
   requestAnimationFrame(frame);
 })();

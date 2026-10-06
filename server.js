@@ -1,8 +1,10 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const rules = require('./public/rules.js');
 
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -10,7 +12,9 @@ const DATA_FILE = path.join(DATA_DIR, 'scores.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_STORED = 100;
 const TOP_N = 10;
-const MAX_BODY_BYTES = 1024;
+const MAX_BODY_BYTES = 8192;   // room for MAX_ROUNDS press times
+const GAME_TTL_MS = 6 * 60 * 60 * 1000;
+const CLOCK_SLACK_S = 0.5;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -47,6 +51,37 @@ try {
   console.error(`Data directory problem: ${err.message}`);
   console.error(`DATA_DIR=${DATA_DIR} must be readable and writable by uid ${process.getuid()}.`);
   process.exit(1);
+}
+
+// --- games ---------------------------------------------------------------
+// A game is a signed token carrying a seed and issue time, so the server keeps no state per
+// open game. Submitting replays the run from the seed; only tokens already used are remembered.
+
+const GAME_SECRET = crypto.randomBytes(32); // per process: a restart voids runs in progress
+const usedGames = new Map(); // signature -> expiry time
+
+const sign = (payload) => crypto.createHmac('sha256', GAME_SECRET).update(payload).digest('base64url');
+
+function newGame(res) {
+  const seed = crypto.randomInt(2 ** 32);
+  const payload = `${seed}.${Date.now()}`;
+  sendJson(res, 201, { token: `${payload}.${sign(payload)}`, seed });
+}
+
+// Returns { seed, issuedAt, sig } or { error }.
+function openGame(token) {
+  const parts = typeof token === 'string' ? token.split('.') : [];
+  if (parts.length !== 3) return { error: 'missing or malformed game' };
+  const [seedStr, atStr, sig] = parts;
+  const expected = Buffer.from(sign(`${seedStr}.${atStr}`));
+  const given = Buffer.from(sig);
+  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return { error: 'invalid game' };
+  const issuedAt = Number(atStr);
+  const now = Date.now();
+  if (now - issuedAt > GAME_TTL_MS) return { error: 'game expired' };
+  for (const [s, expires] of usedGames) if (expires < now) usedGames.delete(s);
+  if (usedGames.has(sig)) return { error: 'game already submitted' };
+  return { seed: Number(seedStr), issuedAt, sig };
 }
 
 // --- http helpers --------------------------------------------------------
@@ -99,11 +134,16 @@ async function postScore(req, res) {
     return sendJson(res, err.status || 400, { error: err.message });
   }
   const name = typeof body?.name === 'string' ? body.name.toUpperCase() : '';
-  const score = body?.score;
   if (!/^[A-Z0-9]{1,8}$/.test(name)) return sendJson(res, 400, { error: 'name must be 1 to 8 letters or digits' });
-  if (!Number.isInteger(score) || score < 1 || score > 9999) {
-    return sendJson(res, 400, { error: 'score must be an integer from 1 to 9999' });
+
+  const game = openGame(body?.game);
+  if (game.error) return sendJson(res, 400, { error: game.error });
+  const run = rules.replay(game.seed, body?.rounds);
+  if (!run || run.score < 1) return sendJson(res, 400, { error: 'run did not verify' });
+  if ((Date.now() - game.issuedAt) / 1000 + CLOCK_SLACK_S < run.minSeconds) {
+    return sendJson(res, 400, { error: 'run did not verify' });
   }
+  const score = run.score;
 
   const entry = { name, score, at: new Date().toISOString() };
   const next = [...scores, entry].sort((a, b) => b.score - a.score).slice(0, MAX_STORED); // stable: ties keep earlier first
@@ -114,6 +154,7 @@ async function postScore(req, res) {
     return sendJson(res, 500, { error: 'could not save score' });
   }
   scores = next;
+  usedGames.set(game.sig, game.issuedAt + GAME_TTL_MS);
   const idx = scores.indexOf(entry);
   sendJson(res, 201, { ok: true, rank: idx === -1 ? null : idx + 1 });
 }
@@ -137,6 +178,9 @@ const server = http.createServer((req, res) => {
 
   if (pathname === '/api/leaderboard') {
     return req.method === 'GET' ? getLeaderboard(res) : sendJson(res, 405, { error: 'method not allowed' });
+  }
+  if (pathname === '/api/games') {
+    return req.method === 'POST' ? newGame(res) : sendJson(res, 405, { error: 'method not allowed' });
   }
   if (pathname === '/api/scores') {
     return req.method === 'POST' ? postScore(req, res) : sendJson(res, 405, { error: 'method not allowed' });
