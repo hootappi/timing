@@ -21,11 +21,26 @@ const RESULT_TTL_MS = 60 * 60 * 1000;       // time to type a name after a run
 const CLOCK_EARLY_S = 0.5;
 const CLOCK_LATE_S = (gameSeconds) => 2 + 0.1 * gameSeconds;   // network round trips and dropped frames
 const RESET_TZ = process.env.RESET_TZ || 'Europe/Copenhagen';
-const [RESET_H, RESET_M] = (process.env.RESET_AT || '22:22').split(':').map(Number);
-if (!(RESET_H >= 0 && RESET_H < 24 && RESET_M >= 0 && RESET_M < 60)) {
-  console.error(`RESET_AT must be HH:MM, got ${process.env.RESET_AT}`);
+// House score: added to each day's board at HOUSE_AT, as a mark to beat. HOUSE_SCORE=0 turns it off.
+const HOUSE_NAME = process.env.HOUSE_NAME || 'HOOTAPPI';
+const HOUSE_SCORE = Number(process.env.HOUSE_SCORE ?? 15);
+
+function config(name, ok, hint) {
+  if (ok) return;
+  console.error(`${name} must be ${hint}, got ${process.env[name]}`);
   process.exit(1);
 }
+
+function parseTime(name, fallback) {
+  const [h, m] = (process.env[name] || fallback).split(':').map(Number);
+  config(name, h >= 0 && h < 24 && m >= 0 && m < 60, 'HH:MM');
+  return [h, m];
+}
+
+const [RESET_H, RESET_M] = parseTime('RESET_AT', '22:22');
+const [HOUSE_H, HOUSE_M] = parseTime('HOUSE_AT', '07:00');
+config('HOUSE_NAME', /^[A-Z0-9]{1,8}$/.test(HOUSE_NAME), '1 to 8 capital letters or digits');
+config('HOUSE_SCORE', Number.isInteger(HOUSE_SCORE) && HOUSE_SCORE >= 0, 'a whole number, 0 to turn off');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -53,11 +68,20 @@ function tzOffset(t) {
   return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(t / 1000) * 1000;
 }
 
-// Instant of RESET_H:RESET_M on the given RESET_TZ calendar day (month 1-based; day may overflow).
-function resetOn(year, month, day) {
-  const wall = Date.UTC(year, month - 1, day, RESET_H, RESET_M);
+// Instant of h:m on the given RESET_TZ calendar day (month 1-based; day may overflow).
+function instantOn(year, month, day, h, m) {
+  const wall = Date.UTC(year, month - 1, day, h, m);
   const guess = wall - tzOffset(wall);
   return wall - tzOffset(guess);   // second pass settles DST-change days
+}
+
+const resetOn = (year, month, day) => instantOn(year, month, day, RESET_H, RESET_M);
+
+// First HOUSE_AT after the board's day began.
+function houseTime(dayStart) {
+  const p = wallClock(dayStart);
+  const t = instantOn(p.year, p.month, p.day, HOUSE_H, HOUSE_M);
+  return t >= dayStart ? t : instantOn(p.year, p.month, p.day + 1, HOUSE_H, HOUSE_M);
 }
 
 function lastReset(now = Date.now()) {
@@ -80,7 +104,7 @@ function dayOf(t) {
 
 // --- persistence ---------------------------------------------------------
 // board: { dayStart: ms of the reset that opened today's board, scores: [...] best first,
-//          winners: [{ day, name, score }] newest first }
+//          winners: [{ day, name, score }] newest first, house: true once today's house score is in }
 
 function loadBoard() {
   try {
@@ -109,19 +133,30 @@ try {
   process.exit(1);
 }
 
-// Close the day if its reset has passed: its top score becomes that day's winner.
-// Ties go to whoever reached the score first.
-function rollOver() {
+const byRank = (a, b) => b.score - a.score || Date.parse(a.at) - Date.parse(b.at);   // ties: earlier run first
+
+// Bring the board up to now. Close the day if its reset has passed: its top score becomes that
+// day's winner. Then add the house score if its time has come. Both are timed by the clock, not
+// by when a request happens to arrive, so the result is the same as if a timer had done it.
+function catchUp() {
+  let next = board;
   const since = lastReset();
-  if (board.dayStart >= since) return;
-  const winners = [...board.winners];
-  const top = board.scores[0];
-  if (top) winners.unshift({ day: dayOf(nextReset(board.dayStart)), name: top.name, score: top.score });
-  const next = { dayStart: since, scores: [], winners };
+  if (next.dayStart < since) {
+    const winners = [...next.winners];
+    const top = next.scores[0];
+    if (top) winners.unshift({ day: dayOf(nextReset(next.dayStart)), name: top.name, score: top.score });
+    next = { dayStart: since, scores: [], winners };
+  }
+  const houseAt = houseTime(next.dayStart);
+  if (HOUSE_SCORE > 0 && !next.house && Date.now() >= houseAt) {
+    const entry = { name: HOUSE_NAME, score: HOUSE_SCORE, at: new Date(houseAt).toISOString() };
+    next = { ...next, house: true, scores: [...next.scores, entry].sort(byRank).slice(0, MAX_STORED) };
+  }
+  if (next === board) return;
   try {
     saveBoard(next);
   } catch (err) {
-    console.error(`Failed to save daily reset: ${err.message}`);   // keep going in memory; the next save retries
+    console.error(`Failed to save board: ${err.message}`);   // keep going in memory; the next save retries
   }
   board = next;
 }
@@ -197,7 +232,7 @@ function readJson(req) {
 // --- routes --------------------------------------------------------------
 
 function getLeaderboard(res) {
-  rollOver();
+  catchUp();
   sendJson(res, 200, {
     scores: board.scores.slice(0, TOP_N).map(({ name, score }) => ({ name, score })),
     resetsAt: new Date(nextReset()).toISOString(),
@@ -241,12 +276,12 @@ async function postScore(req, res) {
   const result = redeem('result', body?.result, RESULT_TTL_MS);
   if (result.error) return sendJson(res, 400, { error: result.error });
 
-  rollOver();
+  catchUp();
   if (result.at < board.dayStart) return sendJson(res, 400, { error: 'the board reset after this run' });
 
   const entry = { name, score: result.a, at: new Date(result.at).toISOString() };
   const scores = [...board.scores, entry]
-    .sort((a, b) => b.score - a.score || Date.parse(a.at) - Date.parse(b.at))   // ties: earlier run first
+    .sort(byRank)
     .slice(0, MAX_STORED);
   const next = { ...board, scores };
   try {

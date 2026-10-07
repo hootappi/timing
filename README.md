@@ -9,6 +9,7 @@ Plain HTML, CSS and vanilla JS on a canvas. A small dependency-free Node server.
 - The marker must be inside the zone when you click or tap. Clicking outside it, or letting the marker reach the right edge, ends the game.
 - Each hit: zone width x0.88 (floor at 3.5% of the bar), marker speed x1.12.
 - The leaderboard clears every day at 22:22 Copenhagen time. That day's top score is kept as the day's winner (on a tie, whoever reached it first).
+- Every day at 07:00 the house score, HOOTAPPI with 15, is added to the board as a mark to beat. If nobody beats it, HOOTAPPI is that day's winner.
 - Only scores of 1 or more can be submitted. Names are 1 to 8 letters or digits.
 
 ## Screen and devices
@@ -42,9 +43,12 @@ docker run --rm -p 3000:3000 -v "$PWD/data:/app/data" timing
 | `PORT` | `3000` | Listen port |
 | `DATA_DIR` | `./data` (`/app/data` in the image) | Directory holding `leaderboard.json` |
 | `RESET_AT` | `22:22` | Daily leaderboard reset, `HH:MM` |
-| `RESET_TZ` | `Europe/Copenhagen` | IANA time zone `RESET_AT` is in |
+| `RESET_TZ` | `Europe/Copenhagen` | IANA time zone for `RESET_AT` and `HOUSE_AT` |
+| `HOUSE_AT` | `07:00` | When the daily house score is added, `HH:MM` |
+| `HOUSE_NAME` | `HOOTAPPI` | House score name, 1 to 8 capital letters or digits |
+| `HOUSE_SCORE` | `15` | House score; `0` turns it off |
 
-The reset needs no timer or cron: each request checks whether a reset time has passed since the board's day began, and if so records the winner and clears the board. A restart or downtime across 22:22 still resets it.
+The reset needs no timer or cron: each request checks whether a reset time has passed since the board's day began, and if so records the winner and clears the board. The house score works the same way: it appears at the first request after 07:00, stamped 07:00, so it ranks exactly as if it had been added on the minute. A restart or downtime across 22:22 still resets it.
 
 ## Endpoints
 
