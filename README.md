@@ -88,11 +88,11 @@ Puts a verified result on the board. Body: `{ "result": "<token>", "name": "ABC"
 
 ### How runs are verified
 
-The client never sends a score. The server regenerates every zone from the seed (`public/rules.js`, shared with the browser) and checks that each press landed inside its zone. It also compares the game time the run claims with the real time between `POST /api/games` and `POST /api/games/finish`: less means invented presses, much more (over 2 s + 10%) means the game clock was slowed down in the browser. Game and result tokens are signed, work once, and expire (game 2 h, result 1 h). A server restart voids runs in progress.
+The client never sends a score. The server regenerates every zone from the seed (`public/rules.js`, shared with the browser) and checks that each press landed inside its zone. It also compares the game time the run claims with the real time between `POST /api/games` and `POST /api/games/finish`: less means invented presses, more means the game clock was slowed down in the browser. The game clock tracks real time exactly (no frame-time cap, phase overshoot carried over, presses judged at the input event's own timestamp), so an honest run is only one network round trip longer than its game time; the server allows 1 s. Game and result tokens are signed, work once, and expire (game 2 h, result 1 h). A server restart voids runs in progress.
 
-Side effect: switching tabs mid-run pauses the game but not the server's clock, so that run cannot be saved.
+Side effect: switching tabs mid-run does not pause the game. Returning finds the marker past the end of the bar and the run over.
 
-Limits: this stops edited game logic, a slowed-down game clock and hand-crafted requests. It does not stop a script that watches the marker and presses when it is in the zone, playing in real time. Nothing in a browser game can; the input is whatever the browser sends. There is no auth and no rate limiting.
+Limits: this stops edited game logic, a slowed-down game clock (beyond 1 s in total) and hand-crafted requests. It does not stop an auto-player: one line added in dev tools that presses when the marker is in the zone, playing in real time. Nothing in a browser game can; the input is whatever the browser sends. There is no auth and no rate limiting.
 
 ## Deploy (lab VPS, level 2)
 

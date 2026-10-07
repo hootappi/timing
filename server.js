@@ -17,9 +17,11 @@ const MAX_BODY_BYTES = 8192;   // room for MAX_ROUNDS press times
 const GAME_TTL_MS = 2 * 60 * 60 * 1000;     // a run must finish within this of starting
 const RESULT_TTL_MS = 60 * 60 * 1000;       // time to type a name after a run
 // Real time between issuing a game and finishing it must match the game time the run claims.
-// Less means forged presses; much more means the game clock was slowed down in the browser.
+// Less means forged presses; more means the game clock was slowed down in the browser. The
+// client's game clock tracks real time exactly, so the only honest extra is one network round
+// trip (the game token's way in, the finish report's way out). Any slow motion has to fit in it.
 const CLOCK_EARLY_S = 0.5;
-const CLOCK_LATE_S = (gameSeconds) => 2 + 0.1 * gameSeconds;   // network round trips and dropped frames
+const CLOCK_LATE_S = 1;
 const RESET_TZ = process.env.RESET_TZ || 'Europe/Copenhagen';
 // House score: added to each day's board at HOUSE_AT, as a mark to beat. HOUSE_SCORE=0 turns it off.
 const HOUSE_NAME = process.env.HOUSE_NAME || 'HOOTAPPI';
@@ -289,7 +291,7 @@ async function finishGame(req, res) {
   if (game.error) return sendJson(res, 400, { error: game.error });
   const run = rules.replay(game.a, body?.rounds, body?.lastT);
   const real = (Date.now() - game.at) / 1000;
-  if (!run || real < run.seconds - CLOCK_EARLY_S || real > run.seconds + CLOCK_LATE_S(run.seconds)) {
+  if (!run || real < run.seconds - CLOCK_EARLY_S || real > run.seconds + CLOCK_LATE_S) {
     return sendJson(res, 400, { error: 'run did not verify' });
   }
   used.set(game.sig, game.at + GAME_TTL_MS);

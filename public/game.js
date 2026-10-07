@@ -153,7 +153,9 @@
     showOver();
   }
 
-  function act() {
+  // `at`: the input event's timestamp. A press is judged at that moment, not at the last frame.
+  function act(at) {
+    if (state === 'sweep') tick(at);
     if (state === 'idle') startGame();
     else if (state === 'sweep') judge();
     else if (state === 'over' && stateT > RETRY_LOCKOUT) startGame();
@@ -188,12 +190,20 @@
   // --- update ------------------------------------------------------------
   function update(dt) {
     stateT += dt;
-    if (state === 'ready' && stateT >= R.READY_TIME) setState('sweep');
-    else if (state === 'sweep') {
+    // Phase changes carry their overshoot into the next phase: game time must equal real time,
+    // because the server compares the two.
+    if (state === 'ready' && stateT >= R.READY_TIME) {
+      sweepT = stateT - R.READY_TIME;
+      setState('sweep');
+      sweep();
+    } else if (state === 'sweep') {
       sweepT += dt;
-      pos = speed * sweepT;   // same formula the server replays
-      if (pos > 1) { pos = 1; sweepT = 1 / speed; miss('too late'); }
-    } else if (state === 'hit' && stateT >= R.HIT_TIME) prepareRound();
+      sweep();
+    } else if (state === 'hit' && stateT >= R.HIT_TIME) {
+      const over = stateT - R.HIT_TIME;
+      prepareRound();
+      stateT = over;
+    }
 
     for (const p of particles) { p.life -= dt; p.vy += 700 * dt; p.x += p.vx * dt; p.y += p.vy * dt; }
     particles = particles.filter((p) => p.life > 0);
@@ -203,6 +213,11 @@
     floaters = floaters.filter((f) => f.t < 0.7);
     shake = Math.max(0, shake - 40 * dt);
     flash.t = Math.max(0, flash.t - dt);
+  }
+
+  function sweep() {
+    pos = speed * sweepT;   // same formula the server replays
+    if (pos > 1) { pos = 1; sweepT = 1 / speed; miss('too late'); }
   }
 
   // --- draw --------------------------------------------------------------
@@ -331,22 +346,27 @@
 
   // --- loop --------------------------------------------------------------
   let last = performance.now();
+  // Advance the game to `now` (ms, performance.now() timebase). Deliberately uncapped: a long
+  // frame or a hidden tab moves the marker as far as real time did.
+  function tick(now) {
+    update(Math.max(0, now - last) / 1000);
+    last = Math.max(last, now);
+  }
+
   function frame(now) {
-    const dt = Math.min(0.05, (now - last) / 1000);
-    last = now;
-    update(dt);
+    tick(now);
     draw();
     requestAnimationFrame(frame);
   }
 
   // --- input -------------------------------------------------------------
-  canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); act(); });
+  canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); act(e.timeStamp); });
   window.addEventListener('keydown', (e) => {
     if (e.code !== 'Space' || e.repeat) return;
     const t = e.target;
     if (t instanceof HTMLInputElement || t instanceof HTMLButtonElement) return;
     e.preventDefault();
-    act();
+    act(e.timeStamp);
   });
   againBtn.addEventListener('click', () => { againBtn.blur(); startGame(); });
 
