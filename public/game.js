@@ -28,6 +28,8 @@
   const againBtn = document.getElementById('again');
   const boardEl = document.getElementById('board');
   const boardTitle = document.getElementById('board-title');
+  const winnersEl = document.getElementById('winners');
+  const winnersTitle = document.getElementById('winners-title');
   const boardBtn = document.getElementById('board-btn');
   const fsBtn = document.getElementById('fs-btn');
   const safeProbe = document.getElementById('safe');
@@ -61,14 +63,14 @@
   }
 
   // --- state -------------------------------------------------------------
-  let state = 'idle';        // idle | ready | sweep | hit | over
+  let state = 'idle';        // idle | connecting | ready | sweep | hit | over
   let stateT = 0;
   let hits = 0;
   let best = store('timing.best') | 0;
   let pos = 0, sweepT = 0, zoneX = 0.5, zoneW = R.START_ZONE, speed = R.START_SPEED;
   let next = Math.random;    // zone positions; seeded from the server's game for ranked runs
   let game = null;           // { token, seed } of the run in progress; null means unranked
-  let nextGame = null;       // fetched ahead so a run can start without waiting on the network
+  let finishing = null;      // promise of the result token for the run just ended
   let rounds = [];           // sweepT of each hit, submitted for the server to replay
   let overReason = '';
   let shake = 0, flash = { color: '', t: 0, dur: 0.3 };
@@ -104,9 +106,15 @@
     setState('ready');
   }
 
-  function startGame() {
-    game = nextGame;
-    nextGame = null;
+  // The game is fetched as the run starts, not ahead: the server times the run from this moment.
+  async function startGame() {
+    pos = 0;
+    setState('connecting');
+    game = null;
+    try {
+      const res = await fetch('/api/games', { method: 'POST', signal: AbortSignal.timeout(3000) });
+      if (res.ok) game = await res.json();
+    } catch { /* offline: play unranked */ }
     next = game ? R.rng(game.seed) : Math.random;
     rounds = [];
     hits = 0;
@@ -140,6 +148,7 @@
     if (!reducedMotion) shake = 16 * u;
     tone(150, 0.35, 'sawtooth', 0.09, 60);
     if (hits > best) { best = hits; store('timing.best', String(best)); }
+    finishing = game && hits > 0 ? finish(sweepT) : null;
     setState('over');
     showOver();
   }
@@ -183,7 +192,7 @@
     else if (state === 'sweep') {
       sweepT += dt;
       pos = speed * sweepT;   // same formula the server replays
-      if (pos > 1) { pos = 1; miss('too late'); }
+      if (pos > 1) { pos = 1; sweepT = 1 / speed; miss('too late'); }
     } else if (state === 'hit' && stateT >= R.HIT_TIME) prepareRound();
 
     for (const p of particles) { p.life -= dt; p.vy += 700 * dt; p.x += p.vx * dt; p.y += p.vy * dt; }
@@ -315,8 +324,8 @@
       ctx.globalAlpha = 1;
     } else if (state === 'over') {
       text(overReason.toUpperCase(), cx, BAR.y - 46 * u, 52 * u, C.bad);
-    } else if (state === 'ready' || (state === 'sweep' && hits === 0)) {
-      text(state === 'ready' ? 'GET READY' : 'NOW!', cx, below + 44 * u, 26 * u, C.muted, 'center', 700);
+    } else if (state === 'connecting' || state === 'ready' || (state === 'sweep' && hits === 0)) {
+      text(state !== 'sweep' ? 'GET READY' : 'NOW!', cx, below + 44 * u, 26 * u, C.muted, 'center', 700);
     }
   }
 
@@ -363,11 +372,40 @@
   window.addEventListener('resize', layout);
 
   // --- leaderboard -------------------------------------------------------
-  async function fetchGame() {
-    try {
-      const res = await fetch('/api/games', { method: 'POST' });
-      if (res.ok) nextGame = await res.json();
-    } catch { /* offline: the next run is unranked */ }
+  // Report the run the moment it ends, so the server can check it took real time to play.
+  // Resolves to a result token that the name form later redeems.
+  function finish(lastT) {
+    const p = fetch('/api/games/finish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ game: game.token, rounds, lastT }),
+    }).then(async (res) => {
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || String(res.status));
+      return data.result;
+    });
+    p.catch(() => { /* reported when the player submits */ });
+    return p;
+  }
+
+  function row(cells, className) {
+    const li = document.createElement('li');
+    if (className) li.className = className;
+    for (const [cls, val] of cells) {
+      const span = document.createElement('span');
+      span.className = cls;
+      span.textContent = val;
+      li.append(span);
+    }
+    return li;
+  }
+
+  function showWinners(winners) {
+    winnersEl.replaceChildren(...winners.map((w) => {
+      const day = new Date(`${w.day}T12:00:00Z`).toLocaleDateString([], { day: 'numeric', month: 'short', timeZone: 'UTC' });
+      return row([['day', day], ['name', w.name], ['pts', w.score]], 'win');
+    }));
+    winnersEl.hidden = winnersTitle.hidden = winners.length === 0;
   }
 
   async function loadBoard(highlightRank) {
@@ -378,6 +416,7 @@
       if (!res.ok) throw new Error(String(res.status));
       const data = await res.json();
       list = data.scores;
+      showWinners(data.winners || []);
       const at = new Date(data.resetsAt);
       boardTitle.textContent = `Today's top 10 · resets ${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
     } catch {
@@ -390,23 +429,12 @@
       boardEl.append(li);
       return;
     }
-    list.forEach((s, i) => {
-      const li = document.createElement('li');
-      if (i + 1 === highlightRank) li.className = 'mine';
-      for (const [cls, val] of [['rank', i + 1], ['name', s.name], ['pts', s.score]]) {
-        const span = document.createElement('span');
-        span.className = cls;
-        span.textContent = val;
-        li.append(span);
-      }
-      boardEl.append(li);
-    });
+    list.forEach((s, i) => boardEl.append(row([['rank', i + 1], ['name', s.name], ['pts', s.score]], i + 1 === highlightRank ? 'mine' : '')));
   }
 
   function showOver() {
     scoreMsg.textContent = '';
     loadBoard();
-    fetchGame();
     if (hits > 0 && !game) {
       overScore.textContent = `Score: ${hits}`;
       scoreForm.hidden = true;
@@ -434,10 +462,12 @@
     const submit = scoreForm.querySelector('button');
     submit.disabled = true;
     try {
+      const result = await finishing;
+      if (!result) throw new Error('run was not verified');
       const res = await fetch('/api/scores', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ game: game.token, name, rounds }),
+        body: JSON.stringify({ result, name }),
       });
       if (!res.ok) throw new Error((await res.json()).error || String(res.status));
       const { rank } = await res.json();
@@ -458,6 +488,5 @@
   prepareRound();
   setState('idle');   // show a demo zone behind the title
   loadBoard();
-  fetchGame();
   requestAnimationFrame(frame);
 })();

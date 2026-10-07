@@ -153,5 +153,8 @@ li .name { font-weight: 700; letter-spacing: 0.1em; overflow-wrap: anywhere; }
 li .pts { font-weight: 700; }
 li.mine { background: rgba(255, 210, 63, 0.15); }
 li.empty { display: block; color: var(--muted); }
+li.win { grid-template-columns: 7ch 1fr auto; }
+li .day { color: var(--muted); }
+#winners-title { margin-top: 16px; }
 
 [hidden] { display: none !important; }

@@ -41,18 +41,21 @@
     return pos >= round.zoneX - EPS && pos <= round.zoneX + round.zoneW + EPS;
   };
 
-  // Replays a run from its seed and press times. Returns null if any press missed,
-  // otherwise the score and the least wall-clock time the run can have taken.
-  R.replay = (seed, times) => {
+  // Replays a run from its seed, the press time of each hit, and how long the final (missed)
+  // round had been sweeping when it ended. Returns null if any hit was outside its zone,
+  // otherwise the score and the game time the run took.
+  R.replay = (seed, times, lastT) => {
     if (!Array.isArray(times) || times.length > R.MAX_ROUNDS) return null;
+    const valid = (t) => typeof t === 'number' && Number.isFinite(t) && t >= 0;
     const next = R.rng(seed);
-    let minSeconds = 0;
+    let seconds = 0;
     for (let n = 0; n < times.length; n++) {
       const t = times[n];
-      if (typeof t !== 'number' || !Number.isFinite(t) || t < 0 || !R.isHit(R.round(next, n), t)) return null;
-      minSeconds += R.READY_TIME + t + R.HIT_TIME;
+      if (!valid(t) || !R.isHit(R.round(next, n), t)) return null;
+      seconds += R.READY_TIME + t + R.HIT_TIME;
     }
-    return { score: times.length, minSeconds };
+    if (!valid(lastT) || R.round(next, times.length).speed * lastT > 1 + EPS) return null;
+    return { score: times.length, seconds: seconds + R.READY_TIME + lastT };
   };
 
   if (typeof module === 'object' && module.exports) module.exports = R;

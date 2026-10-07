@@ -8,7 +8,7 @@ Plain HTML, CSS and vanilla JS on a canvas. A small dependency-free Node server.
 
 - The marker must be inside the zone when you click or tap. Clicking outside it, or letting the marker reach the right edge, ends the game.
 - Each hit: zone width x0.88 (floor at 3.5% of the bar), marker speed x1.12.
-- The leaderboard clears every day at 22:22 Copenhagen time.
+- The leaderboard clears every day at 22:22 Copenhagen time. That day's top score is kept as the day's winner (on a tie, whoever reached it first).
 - Only scores of 1 or more can be submitted. Names are 1 to 8 letters or digits.
 
 ## Screen and devices
@@ -26,7 +26,7 @@ Node 20 or newer:
 npm start
 ```
 
-Open <http://localhost:3000>. Scores are stored in `./data/scores.json`.
+Open <http://localhost:3000>. The board is stored in `./data/leaderboard.json`.
 
 Or with Docker:
 
@@ -40,43 +40,54 @@ docker run --rm -p 3000:3000 -v "$PWD/data:/app/data" timing
 | Variable | Default | Meaning |
 |---|---|---|
 | `PORT` | `3000` | Listen port |
-| `DATA_DIR` | `./data` (`/app/data` in the image) | Directory holding `scores.json` |
+| `DATA_DIR` | `./data` (`/app/data` in the image) | Directory holding `leaderboard.json` |
 | `RESET_AT` | `22:22` | Daily leaderboard reset, `HH:MM` |
 | `RESET_TZ` | `Europe/Copenhagen` | IANA time zone `RESET_AT` is in |
 
-The reset needs no timer or cron: each request ignores scores older than the most recent reset time, and the next save drops them from `scores.json`. A restart or downtime across 22:22 still clears the board.
+The reset needs no timer or cron: each request checks whether a reset time has passed since the board's day began, and if so records the winner and clears the board. A restart or downtime across 22:22 still resets it.
 
 ## Endpoints
 
 ### `GET /api/leaderboard`
 
-Returns today's top ten scores, best first, and when the board next clears.
+Today's top ten (best first), when the board next clears, and the last 30 daily winners (newest first).
 
 ```json
-{ "scores": [{ "name": "ABC", "score": 17 }], "resetsAt": "2026-10-07T20:22:00.000Z" }
+{
+  "scores": [{ "name": "ABC", "score": 17 }],
+  "resetsAt": "2026-10-07T20:22:00.000Z",
+  "winners": [{ "day": "2026-10-06", "name": "XYZ", "score": 21 }]
+}
 ```
 
 ### `POST /api/games`
 
-Starts a ranked run. Returns `201 { "token": "...", "seed": 123456789 }`. The client fetches one ahead of time so a run never waits on the network; if it has none (server unreachable), the run is played unranked and cannot be submitted.
+Starts a ranked run. Returns `201 { "token": "...", "seed": 123456789 }`. The client calls this the moment the player starts, because the server times the run from here. If it fails (server unreachable), the run is played unranked.
+
+### `POST /api/games/finish`
+
+Sent the moment a run ends. Body:
+
+```json
+{ "game": "<token>", "rounds": [0.912, 0.774, 0.803], "lastT": 0.41 }
+```
+
+- `rounds`: for each hit, seconds the marker had been sweeping when the player pressed.
+- `lastT`: how long the final, missed round had been sweeping when it ended.
+
+Returns `200 { "score": 3, "result": "<token>" }` (`result` is `null` for a score of 0), or `400`.
 
 ### `POST /api/scores`
 
-Submit a finished run. Body:
+Puts a verified result on the board. Body: `{ "result": "<token>", "name": "ABC" }`. `name` is 1 to 8 letters or digits (lowercase is uppercased). Returns `201 { "ok": true, "rank": 4 }` (`rank` is `null` outside the stored top 100), or `400`/`413`.
 
-```json
-{ "game": "<token>", "name": "ABC", "rounds": [0.912, 0.774, 0.803] }
-```
+### How runs are verified
 
-- `game`: token from `POST /api/games`. Each token can be submitted once and expires after 6 hours.
-- `name`: 1 to 8 characters, letters or digits (lowercase is uppercased).
-- `rounds`: for each hit, seconds the marker had been sweeping when the player pressed.
+The client never sends a score. The server regenerates every zone from the seed (`public/rules.js`, shared with the browser) and checks that each press landed inside its zone. It also compares the game time the run claims with the real time between `POST /api/games` and `POST /api/games/finish`: less means invented presses, much more (over 2 s + 10%) means the game clock was slowed down in the browser. Game and result tokens are signed, work once, and expire (game 2 h, result 1 h). A server restart voids runs in progress.
 
-The client never sends a score. The server regenerates every zone from the seed (`public/rules.js`, shared with the browser), checks that each press landed inside its zone, and checks that at least as much real time has passed since the token was issued as the run needs. The score is the number of verified rounds.
+Side effect: switching tabs mid-run pauses the game but not the server's clock, so that run cannot be saved.
 
-Returns `201 { "ok": true, "rank": 4 }` (`rank` is `null` if outside the stored top 100), or `400`/`413` with `{ "error": "..." }`.
-
-Limits: this stops edited game logic and hand-crafted requests, but not a script that reads the zone and presses at the right moment. Any score computed in the player's browser can be botted; the replay only makes cheating cost a bot instead of a one-line edit. There is no auth and no rate limiting.
+Limits: this stops edited game logic, a slowed-down game clock and hand-crafted requests. It does not stop a script that watches the marker and presses when it is in the zone, playing in real time. Nothing in a browser game can; the input is whatever the browser sends. There is no auth and no rate limiting.
 
 ## Deploy (lab VPS, level 2)
 
