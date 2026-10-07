@@ -8,6 +8,9 @@ services:
       # Homepage already holds 100.74.23.114:3000.
       # Level 3: drop this line and add `timing.lab.hootappi.com { reverse_proxy timing:3000 }` to the Caddyfile.
       - "100.74.23.114:3001:3000"
+    environment:
+      # Rhythm lock hash, read from .env next to this file (git-ignored). Unset: lock off.
+      LOCK_HASH: ${LOCK_HASH:-}
     volumes:
       - /home/hootappi/data/timing:/app/data
     networks:

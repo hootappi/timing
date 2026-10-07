@@ -47,6 +47,7 @@ docker run --rm -p 3000:3000 -v "$PWD/data:/app/data" timing
 | `HOUSE_AT` | `07:00` | When the daily house score is added, `HH:MM` |
 | `HOUSE_NAME` | `HOOTAPPI` | House score name, 1 to 8 capital letters or digits |
 | `HOUSE_SCORE` | `15` | House score; `0` turns it off |
+| `LOCK_HASH` | unset | Optional challenge, off when unset. Set it in a git-ignored `.env` next to `compose.yaml`, never in git. |
 
 The reset needs no timer or cron: each request checks whether a reset time has passed since the board's day began, and if so records the winner and clears the board. The house score works the same way: it appears at the first request after 07:00, stamped 07:00, so it ranks exactly as if it had been added on the minute. A restart or downtime across 22:22 still resets it.
 

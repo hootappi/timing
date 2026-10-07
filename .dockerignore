@@ -2,6 +2,7 @@
 .gitignore
 node_modules
 data
+.env
 compose.yaml
 Dockerfile
 .dockerignore

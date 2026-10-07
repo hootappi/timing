@@ -42,6 +42,15 @@ const [HOUSE_H, HOUSE_M] = parseTime('HOUSE_AT', '07:00');
 config('HOUSE_NAME', /^[A-Z0-9]{1,8}$/.test(HOUSE_NAME), '1 to 8 capital letters or digits');
 config('HOUSE_SCORE', Number.isInteger(HOUSE_SCORE) && HOUSE_SCORE >= 0, 'a whole number, 0 to turn off');
 
+// Rhythm lock, a challenge for friends. Each hit of a ranked run lands in the left (0) or right (1)
+// half of its zone. A run whose first hits spell the pattern with this SHA-256 crowns its player:
+// the name they enter becomes the house name, and the run's score the house score, from the next
+// HOUSE_AT. It can change nothing else. Works once per hash; unset turns it off and restores the
+// configured house. Keep the hash out of git (.env on the box): a short pattern is trivial to
+// recover from its hash.
+const LOCK_HASH = (process.env.LOCK_HASH || '').toLowerCase();
+config('LOCK_HASH', LOCK_HASH === '' || /^[0-9a-f]{64}$/.test(LOCK_HASH), 'a SHA-256 hex digest, or empty');
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -133,7 +142,11 @@ try {
   process.exit(1);
 }
 
-const byRank = (a, b) => b.score - a.score || Date.parse(a.at) - Date.parse(b.at);   // ties: earlier run first
+// A crown counts only while its hash is the configured one: a new pattern restores the default house.
+const house = (b) => (LOCK_HASH && b.crown?.hash === LOCK_HASH ? b.crown : { name: HOUSE_NAME, score: HOUSE_SCORE });
+const crownOpen = () => LOCK_HASH !== '' && board.crown?.hash !== LOCK_HASH;
+
+const byRank =(a, b) => b.score - a.score || Date.parse(a.at) - Date.parse(b.at);   // ties: earlier run first
 
 // Bring the board up to now. Close the day if its reset has passed: its top score becomes that
 // day's winner. Then add the house score if its time has come. Both are timed by the clock, not
@@ -145,11 +158,12 @@ function catchUp() {
     const winners = [...next.winners];
     const top = next.scores[0];
     if (top) winners.unshift({ day: dayOf(nextReset(next.dayStart)), name: top.name, score: top.score });
-    next = { dayStart: since, scores: [], winners };
+    next = { ...next, dayStart: since, scores: [], winners, house: false };
   }
   const houseAt = houseTime(next.dayStart);
-  if (HOUSE_SCORE > 0 && !next.house && Date.now() >= houseAt) {
-    const entry = { name: HOUSE_NAME, score: HOUSE_SCORE, at: new Date(houseAt).toISOString() };
+  const { name, score } = house(next);
+  if (score > 0 && !next.house && Date.now() >= houseAt) {
+    const entry = { name, score, at: new Date(houseAt).toISOString() };
     next = { ...next, house: true, scores: [...next.scores, entry].sort(byRank).slice(0, MAX_STORED) };
   }
   if (next === board) return;
@@ -177,20 +191,26 @@ function issue(kind, a, b) {
   return `${payload}.${sign(kind, payload)}`;
 }
 
-// Returns { a, at, sig } with the token's two numbers, or { error }.
-function redeem(kind, token, ttl) {
+// Returns { a, at, sig, kind } with the token's two numbers, or { error }. Any of `kinds` is
+// accepted, and errors name the first, so a crown token is indistinguishable from a result token.
+function redeem(kinds, token, ttl) {
+  kinds = [].concat(kinds);
+  const label = kinds[0];
   const parts = typeof token === 'string' ? token.split('.') : [];
-  if (parts.length !== 3) return { error: `missing or malformed ${kind}` };
+  if (parts.length !== 3) return { error: `missing or malformed ${label}` };
   const [aStr, atStr, sig] = parts;
-  const expected = Buffer.from(sign(kind, `${aStr}.${atStr}`));
   const given = Buffer.from(sig);
-  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return { error: `invalid ${kind}` };
+  const kind = kinds.find((k) => {
+    const expected = Buffer.from(sign(k, `${aStr}.${atStr}`));
+    return given.length === expected.length && crypto.timingSafeEqual(given, expected);
+  });
+  if (!kind) return { error: `invalid ${label}` };
   const at = Number(atStr);
   const now = Date.now();
-  if (now - at > ttl) return { error: `${kind} expired` };
+  if (now - at > ttl) return { error: `${label} expired` };
   for (const [s, expires] of used) if (expires < now) used.delete(s);
-  if (used.has(sig)) return { error: `${kind} already used` };
-  return { a: Number(aStr), at, sig };
+  if (used.has(sig)) return { error: `${label} already used` };
+  return { a: Number(aStr), at, sig, kind };
 }
 
 // --- http helpers --------------------------------------------------------
@@ -245,6 +265,19 @@ function newGame(res) {
   sendJson(res, 201, { token: issue('game', seed, Date.now()), seed });
 }
 
+// True if the zone halves of a run's first hits spell the rhythm lock pattern.
+function unlocks(seed, times) {
+  const next = rules.rng(seed);
+  const bits = times.map((t, n) => {
+    const r = rules.round(next, n);
+    return r.speed * t < r.zoneX + r.zoneW / 2 ? '0' : '1';
+  }).join('');
+  for (let len = 1; len <= bits.length; len++) {
+    if (crypto.createHash('sha256').update(bits.slice(0, len)).digest('hex') === LOCK_HASH) return true;
+  }
+  return false;
+}
+
 async function finishGame(req, res) {
   let body;
   try {
@@ -260,7 +293,8 @@ async function finishGame(req, res) {
     return sendJson(res, 400, { error: 'run did not verify' });
   }
   used.set(game.sig, game.at + GAME_TTL_MS);
-  const result = run.score > 0 ? issue('result', run.score, Date.now()) : null;
+  const kind = crownOpen() && unlocks(game.a, body.rounds) ? 'crown' : 'result';
+  const result = run.score > 0 ? issue(kind, run.score, Date.now()) : null;
   sendJson(res, 200, { score: run.score, result });
 }
 
@@ -273,7 +307,7 @@ async function postScore(req, res) {
   }
   const name = typeof body?.name === 'string' ? body.name.toUpperCase() : '';
   if (!/^[A-Z0-9]{1,8}$/.test(name)) return sendJson(res, 400, { error: 'name must be 1 to 8 letters or digits' });
-  const result = redeem('result', body?.result, RESULT_TTL_MS);
+  const result = redeem(['result', 'crown'], body?.result, RESULT_TTL_MS);
   if (result.error) return sendJson(res, 400, { error: result.error });
 
   catchUp();
@@ -284,6 +318,8 @@ async function postScore(req, res) {
     .sort(byRank)
     .slice(0, MAX_STORED);
   const next = { ...board, scores };
+  const crowned = result.kind === 'crown' && crownOpen();
+  if (crowned) next.crown = { name, score: result.a, hash: LOCK_HASH };
   try {
     saveBoard(next);
   } catch (err) {
@@ -292,6 +328,7 @@ async function postScore(req, res) {
   }
   board = next;
   used.set(result.sig, result.at + RESULT_TTL_MS);
+  if (crowned) console.log(`Rhythm lock opened: ${name} becomes the house with ${result.a} from the next ${String(HOUSE_H).padStart(2, '0')}:${String(HOUSE_M).padStart(2, '0')}`);
   const idx = scores.indexOf(entry);
   sendJson(res, 201, { ok: true, rank: idx === -1 ? null : idx + 1 });
 }
