@@ -8,6 +8,7 @@ Plain HTML, CSS and vanilla JS on a canvas. A small dependency-free Node server.
 
 - The marker must be inside the zone when you click or tap. Clicking outside it, or letting the marker reach the right edge, ends the game.
 - Each hit: zone width x0.88 (floor at 3.5% of the bar), marker speed x1.12.
+- The leaderboard clears every day at 22:22 Copenhagen time.
 - Only scores of 1 or more can be submitted. Names are 1 to 8 letters or digits.
 
 ## Screen and devices
@@ -40,15 +41,19 @@ docker run --rm -p 3000:3000 -v "$PWD/data:/app/data" timing
 |---|---|---|
 | `PORT` | `3000` | Listen port |
 | `DATA_DIR` | `./data` (`/app/data` in the image) | Directory holding `scores.json` |
+| `RESET_AT` | `22:22` | Daily leaderboard reset, `HH:MM` |
+| `RESET_TZ` | `Europe/Copenhagen` | IANA time zone `RESET_AT` is in |
+
+The reset needs no timer or cron: each request ignores scores older than the most recent reset time, and the next save drops them from `scores.json`. A restart or downtime across 22:22 still clears the board.
 
 ## Endpoints
 
 ### `GET /api/leaderboard`
 
-Returns the top ten scores, best first.
+Returns today's top ten scores, best first, and when the board next clears.
 
 ```json
-{ "scores": [{ "name": "ABC", "score": 17 }] }
+{ "scores": [{ "name": "ABC", "score": 17 }], "resetsAt": "2026-10-07T20:22:00.000Z" }
 ```
 
 ### `POST /api/games`

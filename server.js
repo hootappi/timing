@@ -15,6 +15,12 @@ const TOP_N = 10;
 const MAX_BODY_BYTES = 8192;   // room for MAX_ROUNDS press times
 const GAME_TTL_MS = 6 * 60 * 60 * 1000;
 const CLOCK_SLACK_S = 0.5;
+const RESET_TZ = process.env.RESET_TZ || 'Europe/Copenhagen';
+const [RESET_H, RESET_M] = (process.env.RESET_AT || '22:22').split(':').map(Number);
+if (!(RESET_H >= 0 && RESET_H < 24 && RESET_M >= 0 && RESET_M < 60)) {
+  console.error(`RESET_AT must be HH:MM, got ${process.env.RESET_AT}`);
+  process.exit(1);
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -52,6 +58,48 @@ try {
   console.error(`DATA_DIR=${DATA_DIR} must be readable and writable by uid ${process.getuid()}.`);
   process.exit(1);
 }
+
+// --- daily reset ---------------------------------------------------------
+// No timer: every request looks up the most recent reset time and ignores older scores,
+// so a restart or downtime across the reset cannot skip it.
+
+const tzParts = new Intl.DateTimeFormat('en-US', {
+  timeZone: RESET_TZ, hourCycle: 'h23',
+  year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric',
+});
+
+// Calendar fields of instant t as a clock in RESET_TZ shows them.
+const wallClock = (t) => Object.fromEntries(tzParts.formatToParts(t).map(({ type, value }) => [type, Number(value)]));
+
+// RESET_TZ's offset from UTC at instant t, in ms.
+function tzOffset(t) {
+  const p = wallClock(t);
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(t / 1000) * 1000;
+}
+
+// Instant of RESET_H:RESET_M on the given RESET_TZ calendar day (month 1-based; day may overflow).
+function resetOn(year, month, day) {
+  const wall = Date.UTC(year, month - 1, day, RESET_H, RESET_M);
+  const guess = wall - tzOffset(wall);
+  return wall - tzOffset(guess);   // second pass settles DST-change days
+}
+
+function lastReset(now = Date.now()) {
+  const p = wallClock(now);
+  const today = resetOn(p.year, p.month, p.day);
+  return today <= now ? today : resetOn(p.year, p.month, p.day - 1);
+}
+
+function nextReset(now = Date.now()) {
+  const p = wallClock(now);
+  const today = resetOn(p.year, p.month, p.day);
+  return today > now ? today : resetOn(p.year, p.month, p.day + 1);
+}
+
+const currentScores = () => {
+  const since = lastReset();
+  return scores.filter((s) => Date.parse(s.at) >= since);
+};
 
 // --- games ---------------------------------------------------------------
 // A game is a signed token carrying a seed and issue time, so the server keeps no state per
@@ -123,7 +171,10 @@ function readJson(req) {
 // --- routes --------------------------------------------------------------
 
 function getLeaderboard(res) {
-  sendJson(res, 200, { scores: scores.slice(0, TOP_N).map(({ name, score }) => ({ name, score })) });
+  sendJson(res, 200, {
+    scores: currentScores().slice(0, TOP_N).map(({ name, score }) => ({ name, score })),
+    resetsAt: new Date(nextReset()).toISOString(),
+  });
 }
 
 async function postScore(req, res) {
@@ -146,7 +197,7 @@ async function postScore(req, res) {
   const score = run.score;
 
   const entry = { name, score, at: new Date().toISOString() };
-  const next = [...scores, entry].sort((a, b) => b.score - a.score).slice(0, MAX_STORED); // stable: ties keep earlier first
+  const next = [...currentScores(), entry].sort((a, b) => b.score - a.score).slice(0, MAX_STORED); // stable: ties keep earlier first
   try {
     saveScores(next);
   } catch (err) {

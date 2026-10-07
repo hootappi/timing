@@ -27,6 +27,7 @@
   const scoreMsg = document.getElementById('score-msg');
   const againBtn = document.getElementById('again');
   const boardEl = document.getElementById('board');
+  const boardTitle = document.getElementById('board-title');
   const boardBtn = document.getElementById('board-btn');
   const fsBtn = document.getElementById('fs-btn');
   const safeProbe = document.getElementById('safe');
@@ -375,7 +376,10 @@
     try {
       const res = await fetch('/api/leaderboard');
       if (!res.ok) throw new Error(String(res.status));
-      list = (await res.json()).scores;
+      const data = await res.json();
+      list = data.scores;
+      const at = new Date(data.resetsAt);
+      boardTitle.textContent = `Today's top 10 · resets ${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
     } catch {
       list = null;
     }
